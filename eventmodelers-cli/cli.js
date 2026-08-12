@@ -757,7 +757,7 @@ async function installStack(stackKey, stackCfg, options = {}) {
     // Skipped entirely by `re-init` (options.skipRootScaffold) — that command only
     // refreshes an already-scaffolded project's kit dir + skills, and must never
     // re-touch root/ files the user has since built on top of, nor the root
-    // CLAUDE.md router below.
+    // CLAUDE.md router below (see options.skipRootClaudeMd).
     const rootSrc = join(templatesSource, 'root');
     // root/CLAUDE.md is never copied to the project root directly (see step 3 below) —
     // built-in stacks no longer ship one at all, and an outdated community/--git stack
@@ -765,7 +765,30 @@ async function installStack(stackKey, stackCfg, options = {}) {
     // copy must never let it slip through to root and clobber the shared router there.
     const stackRootClaudeSrc = join(rootSrc, 'CLAUDE.md');
     const stackShipsOwnRootClaude = existsSync(stackRootClaudeSrc);
-    if (!options.skipRootScaffold && existsSync(rootSrc)) {
+
+    // On a fresh `init` of a real stack (options.askAboutScaffold), give the user a
+    // chance to skip the quickstart project files — e.g. installing the Axon build kit
+    // on top of an existing Java project shouldn't dump a fresh pom.xml/mvnw/starter app
+    // on top of it. `re-init`/`--modeling`/`--bridge`/`--build-kit` never set
+    // askAboutScaffold, so this prompt only ever appears where it's actually relevant.
+    let installScaffold = !options.skipRootScaffold;
+    if (installScaffold && options.askAboutScaffold && existsSync(rootSrc)) {
+      if (options.print) {
+        console.log('  ℹ️  --print — installing the stack scaffold by default (run interactively to be asked, or skip it for an existing project)');
+      } else {
+        const choice = await selectPrompt(
+          `Install ${stackCfg.label}'s starter project files into the project root (e.g. pom.xml, docker-compose.yml, a quickstart app)?`,
+          [
+            { label: 'Yes — scaffold a new project (recommended)', value: 'yes' },
+            { label: 'No — this is an existing project, just install the build kit + skills', value: 'no' },
+          ],
+          0,
+        );
+        installScaffold = choice === 'yes';
+      }
+    }
+
+    if (installScaffold && existsSync(rootSrc)) {
       console.log('📦 Installing project files...');
       // .gitignore is the one file every stack's root/ ships that can collide with
       // another already-installed kit's own .gitignore (e.g. modeling-kit + a build-kit
@@ -800,7 +823,11 @@ async function installStack(stackKey, stackCfg, options = {}) {
     // instead of silently guessing either way.
     const rootClaudeDest = join(targetDir, 'CLAUDE.md');
     const sharedRootClaude = join(__dirname, 'shared', 'root-claude', 'CLAUDE.md');
-    const routerContent = options.skipRootScaffold ? null : (existsSync(sharedRootClaude) ? readFileSync(sharedRootClaude, 'utf-8') : null);
+    // Gated by options.skipRootClaudeMd, not installScaffold/skipRootScaffold — even a
+    // fresh init that skips the quickstart project files still needs this written so
+    // Claude Code can find .build-kit/CLAUDE.md. Only `re-init` (kit already installed,
+    // router presumably already there) sets skipRootClaudeMd.
+    const routerContent = options.skipRootClaudeMd ? null : (existsSync(sharedRootClaude) ? readFileSync(sharedRootClaude, 'utf-8') : null);
     if (routerContent !== null) {
       if (!existsSync(rootClaudeDest)) {
         writeFileSync(rootClaudeDest, routerContent);
@@ -1612,6 +1639,7 @@ credentialFlags(program
         force: opts.force,
         credentialOverrides: credentialOverridesFromOpts(opts),
         templatesSource: join(clonedDir, 'templates'),
+        askAboutScaffold: true,
       });
       return;
     }
@@ -1623,6 +1651,7 @@ credentialFlags(program
       global: opts.global,
       force: opts.force,
       credentialOverrides: credentialOverridesFromOpts(opts),
+      askAboutScaffold: true,
     });
   });
 
@@ -1666,6 +1695,7 @@ credentialFlags(program
       force: opts.force,
       credentialOverrides: credentialOverridesFromOpts(opts),
       skipRootScaffold: true,
+      skipRootClaudeMd: true,
     });
   });
 
